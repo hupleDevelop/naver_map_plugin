@@ -22,14 +22,26 @@ import java.util.Map;
 import java.util.Locale;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
 
 import io.flutter.FlutterInjector;
 import io.flutter.embedding.engine.loader.FlutterLoader;
+import android.util.LruCache;
 
 @SuppressWarnings("rawtypes")
 class Convert {
 
     private static Context applicationContext;
+    private static final Object assetCacheLock = new Object();
+    private static final LruCache<String, OverlayImage> assetOverlayCache = new LruCache<>(64);
+    private static final ConcurrentHashMap<String, FutureTask<OverlayImage>> inFlightDecodes = new ConcurrentHashMap<>();
+    private static final ExecutorService assetDecodeExecutor = Executors.newFixedThreadPool(
+            Math.max(2, Runtime.getRuntime().availableProcessors() / 2)
+    );
 
     static void init(Context context) {
         applicationContext = context == null ? null : context.getApplicationContext();
@@ -198,23 +210,79 @@ class Convert {
         String assetName = (String) o;
         if (applicationContext == null || assetName == null) return null;
 
-        FlutterLoader loader = FlutterInjector.instance().flutterLoader();
-        String lookupKey = loader.getLookupKeyForAsset(assetName);
+        // Normalize potential "asset:" prefix from Flutter
+        String normalized = assetName.startsWith("asset:") ? assetName.substring(6) : assetName;
 
-        AssetManager assetManager = applicationContext.getAssets();
-        InputStream is = null;
-        try {
-            is = assetManager.open(lookupKey);
-            Bitmap bitmap = BitmapFactory.decodeStream(is);
-            if (bitmap == null) return null;
-            return OverlayImage.fromBitmap(bitmap);
-        } catch (IOException e) {
-            return null;
-        } finally {
-            if (is != null) {
-                try { is.close(); } catch (IOException ignored) {}
-            }
+        FlutterLoader loader = FlutterInjector.instance().flutterLoader();
+        String lookupKey = loader.getLookupKeyForAsset(normalized);
+        String assetPath = "flutter_assets/" + lookupKey;
+
+        // LRU cache hit
+        synchronized (assetCacheLock) {
+            OverlayImage cached = assetOverlayCache.get(assetPath);
+            if (cached != null) return cached;
         }
+
+        // Fast non-blocking path: return fromAsset wrapper (SDK will decode lazily)
+        OverlayImage oi = OverlayImage.fromAsset(assetPath);
+        synchronized (assetCacheLock) {
+            assetOverlayCache.put(assetPath, oi);
+        }
+        return oi;
+    }
+
+    // Background preloading with future de-duplication. Decodes the PNG and stores OverlayImage in LRU.
+    static void preloadOverlayImage(Object o) {
+        String assetPath = resolveAssetPath(o);
+        if (assetPath == null) return;
+        synchronized (assetCacheLock) {
+            if (assetOverlayCache.get(assetPath) != null) return;
+        }
+        inFlightDecodes.computeIfAbsent(assetPath, key -> {
+            FutureTask<OverlayImage> task = new FutureTask<>(new Callable<OverlayImage>() {
+                @Override
+                public OverlayImage call() {
+                    // Convert back to lookupKey for AssetManager.open
+                    String lookupKey = key.startsWith("flutter_assets/") ? key.substring("flutter_assets/".length()) : key;
+                    AssetManager am = applicationContext.getAssets();
+                    InputStream is = null;
+                    try {
+                        is = am.open(lookupKey);
+                        Bitmap bmp = BitmapFactory.decodeStream(is);
+                        if (bmp == null) return null;
+                        OverlayImage decoded = OverlayImage.fromBitmap(bmp);
+                        synchronized (assetCacheLock) { assetOverlayCache.put(key, decoded); }
+                        return decoded;
+                    } catch (IOException ignored) {
+                        return null;
+                    } finally {
+                        if (is != null) { try { is.close(); } catch (IOException ignored2) {} }
+                        inFlightDecodes.remove(key);
+                    }
+                }
+            });
+            assetDecodeExecutor.submit(task);
+            return task;
+        });
+    }
+
+    static void preloadOverlayImages(List<?> icons) {
+        if (icons == null || icons.isEmpty()) return;
+        int count = 0;
+        for (Object icon : icons) {
+            preloadOverlayImage(icon);
+            if (++count >= 64) break;
+        }
+    }
+
+    private static String resolveAssetPath(Object o) {
+        if (!(o instanceof String)) return null;
+        String assetName = (String) o;
+        if (applicationContext == null || assetName == null) return null;
+        String normalized = assetName.startsWith("asset:") ? assetName.substring(6) : assetName;
+        FlutterLoader loader = FlutterInjector.instance().flutterLoader();
+        String lookupKey = loader.getLookupKeyForAsset(normalized);
+        return "flutter_assets/" + lookupKey;
     }
 
     private static final Map<Object, OverlayImage> cachedOverlayImage = new HashMap();
