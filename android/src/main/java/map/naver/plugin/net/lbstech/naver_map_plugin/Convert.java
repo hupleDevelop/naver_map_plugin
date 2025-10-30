@@ -1,6 +1,8 @@
 package map.naver.plugin.net.lbstech.naver_map_plugin;
 
 import android.annotation.SuppressLint;
+import android.content.Context;
+import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.graphics.PointF;
 import android.graphics.Bitmap;
@@ -18,11 +20,20 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
+import java.io.IOException;
+import java.io.InputStream;
 
-import io.flutter.view.FlutterMain;
+import io.flutter.FlutterInjector;
+import io.flutter.embedding.engine.loader.FlutterLoader;
 
 @SuppressWarnings("rawtypes")
 class Convert {
+
+    private static Context applicationContext;
+
+    static void init(Context context) {
+        applicationContext = context == null ? null : context.getApplicationContext();
+    }
 
     @SuppressWarnings("ConstantConditions")
     static void carveMapOptions(NaverMapOptionSink sink, Map<String, Object> options) {
@@ -185,8 +196,28 @@ class Convert {
 
     static OverlayImage toOverlayImage(Object o) {
         String assetName = (String) o;
-        String key = FlutterMain.getLookupKeyForAsset(assetName);
-        return OverlayImage.fromAsset(key);
+        if (applicationContext == null || assetName == null) return null;
+
+        // flutter 쪽에서 넘어올 수 있는 "asset:" 프리픽스 정리
+        String normalized = assetName.startsWith("asset:") ? assetName.substring(6) : assetName;
+
+        FlutterLoader loader = FlutterInjector.instance().flutterLoader();
+        String lookupKey = loader.getLookupKeyForAsset(normalized);
+
+        AssetManager assetManager = applicationContext.getAssets();
+        InputStream is = null;
+        try {
+            is = assetManager.open(lookupKey);
+            Bitmap bitmap = BitmapFactory.decodeStream(is);
+            if (bitmap == null) return null;
+            return OverlayImage.fromBitmap(bitmap);
+        } catch (IOException e) {
+            return null;
+        } finally {
+            if (is != null) {
+                try { is.close(); } catch (IOException ignored) {}
+            }
+        }
     }
 
     private static final Map<Object, OverlayImage> cachedOverlayImage = new HashMap();
