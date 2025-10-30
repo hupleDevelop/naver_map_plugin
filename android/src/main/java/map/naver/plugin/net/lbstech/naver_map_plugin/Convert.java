@@ -198,11 +198,8 @@ class Convert {
         String assetName = (String) o;
         if (applicationContext == null || assetName == null) return null;
 
-        // flutter 쪽에서 넘어올 수 있는 "asset:" 프리픽스 정리
-        String normalized = assetName.startsWith("asset:") ? assetName.substring(6) : assetName;
-
         FlutterLoader loader = FlutterInjector.instance().flutterLoader();
-        String lookupKey = loader.getLookupKeyForAsset(normalized);
+        String lookupKey = loader.getLookupKeyForAsset(assetName);
 
         AssetManager assetManager = applicationContext.getAssets();
         InputStream is = null;
