@@ -3,7 +3,9 @@ library naver_map_plugin;
 import 'dart:async';
 import 'dart:collection';
 import 'dart:typed_data';
-import 'dart:ui' as ui show Codec, ImageByteFormat, instantiateImageCodec;
+import 'dart:ui'
+    as ui
+    show Codec, FrameInfo, ImageByteFormat, instantiateImageCodec;
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
