@@ -44,6 +44,8 @@ public class NaverMapPlugin implements FlutterPlugin, Application.ActivityLifecy
       // 이 플러그인이 포어그라운드에서만 돌아가기 때문에 백그라운드에서 등록하는 것을 막습니다.
       return;
     }
+    // Initialize Convert with application context for Flutter asset decoding
+    Convert.init(registrar.activity().getApplicationContext());
     NaverMapPlugin plugin = new NaverMapPlugin(registrar.activity());
     registrar.activity().getApplication().registerActivityLifecycleCallbacks(plugin);
     // 라이프사이클 콜백
@@ -61,6 +63,8 @@ public class NaverMapPlugin implements FlutterPlugin, Application.ActivityLifecy
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
     pluginBinding = binding;
+    // Initialize Convert with application context for Flutter asset decoding
+    Convert.init(binding.getApplicationContext());
   }
 
   // 플러그인 등록
