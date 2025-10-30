@@ -1,6 +1,8 @@
 package map.naver.plugin.net.lbstech.naver_map_plugin;
 
 import android.annotation.SuppressLint;
+import android.content.Context;
+import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.graphics.PointF;
 import android.graphics.Bitmap;
@@ -18,12 +20,31 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
 
 import io.flutter.view.FlutterMain;
+import android.util.LruCache;
 
 @SuppressWarnings("rawtypes")
 class Convert {
 
+    private static Context applicationContext;
+    private static final Object assetCacheLock = new Object();
+    private static final LruCache<String, OverlayImage> assetOverlayCache = new LruCache<>(64);
+    private static final ConcurrentHashMap<String, FutureTask<OverlayImage>> inFlightDecodes = new ConcurrentHashMap<>();
+    private static final ExecutorService assetDecodeExecutor = Executors.newFixedThreadPool(
+            Math.max(2, Runtime.getRuntime().availableProcessors() / 2)
+    );
+
+    static void init(Context context) {
+        applicationContext = context == null ? null : context.getApplicationContext();
+    }
     @SuppressWarnings("ConstantConditions")
     static void carveMapOptions(NaverMapOptionSink sink, Map<String, Object> options) {
         if (options.containsKey("mapType"))
@@ -185,8 +206,65 @@ class Convert {
 
     static OverlayImage toOverlayImage(Object o) {
         String assetName = (String) o;
+        if (assetName == null) return null;
+
+        // Use original assetName as cache key (no normalization)
+        synchronized (assetCacheLock) {
+            OverlayImage cached = assetOverlayCache.get(assetName);
+            if (cached != null) return cached;
+        }
+
         String key = FlutterMain.getLookupKeyForAsset(assetName);
-        return OverlayImage.fromAsset(key);
+        OverlayImage oi = OverlayImage.fromAsset(key);
+        synchronized (assetCacheLock) {
+            assetOverlayCache.put(assetName, oi);
+        }
+        return oi;
+    }
+
+    // Background decode + future de-dup using the original assetName as cache/in-flight key
+    static void preloadOverlayImage(Object o) {
+        if (!(o instanceof String)) return;
+        String assetName = (String) o;
+        if (assetName == null) return;
+        synchronized (assetCacheLock) {
+            if (assetOverlayCache.get(assetName) != null) return;
+        }
+        inFlightDecodes.computeIfAbsent(assetName, keyName -> {
+            FutureTask<OverlayImage> task = new FutureTask<>(new Callable<OverlayImage>() {
+                @Override
+                public OverlayImage call() {
+                    if (applicationContext == null) return null;
+                    String lookupKey = FlutterMain.getLookupKeyForAsset(assetName);
+                    AssetManager am = applicationContext.getAssets();
+                    InputStream is = null;
+                    try {
+                        is = am.open(lookupKey);
+                        Bitmap bmp = BitmapFactory.decodeStream(is);
+                        if (bmp == null) return null;
+                        OverlayImage decoded = OverlayImage.fromBitmap(bmp);
+                        synchronized (assetCacheLock) { assetOverlayCache.put(assetName, decoded); }
+                        return decoded;
+                    } catch (IOException ignored) {
+                        return null;
+                    } finally {
+                        if (is != null) { try { is.close(); } catch (IOException ignored2) {} }
+                        inFlightDecodes.remove(assetName);
+                    }
+                }
+            });
+            assetDecodeExecutor.submit(task);
+            return task;
+        });
+    }
+
+    static void preloadOverlayImages(List<?> icons) {
+        if (icons == null || icons.isEmpty()) return;
+        int count = 0;
+        for (Object icon : icons) {
+            preloadOverlayImage(icon);
+            if (++count >= 64) break;
+        }
     }
 
     private static final Map<Object, OverlayImage> cachedOverlayImage = new HashMap();
