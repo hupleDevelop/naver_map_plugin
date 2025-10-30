@@ -15,7 +15,6 @@ import com.naver.maps.map.overlay.Overlay;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -45,23 +44,6 @@ class NaverMarkerController {
     void add(List jsonArray) {
         if (jsonArray == null || jsonArray.isEmpty()) return;
         ExecutorService service = Executors.newCachedThreadPool();
-        // Prewarm a limited set of unique icon assets to reduce first-render latency
-        service.execute(() -> {
-            try {
-                HashSet<String> uniqueIcons = new HashSet<>();
-                for (Object json : jsonArray) {
-                    HashMap<String, Object> data = (HashMap<String, Object>) json;
-                    Object icon = data.get("icon");
-                    if (icon instanceof String) {
-                        uniqueIcons.add((String) icon);
-                        if (uniqueIcons.size() >= 64) break; // cap prewarm to avoid I/O burst
-                    }
-                }
-                for (String iconName : uniqueIcons) {
-                    try { Convert.toOverlayImage(iconName); } catch (Throwable ignored) {}
-                }
-            } catch (Throwable ignored) {}
-        });
         service.execute(()->{
             for (Object json : jsonArray) {
                 HashMap<String, Object> data = (HashMap<String, Object>) json;
