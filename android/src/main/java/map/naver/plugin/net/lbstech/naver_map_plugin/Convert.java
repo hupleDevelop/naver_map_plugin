@@ -212,6 +212,9 @@ class Convert {
 
         // Normalize potential "asset:" prefix from Flutter
         String normalized = assetName.startsWith("asset:") ? assetName.substring(6) : assetName;
+        if (normalized.startsWith("flutter_assets/")) {
+            normalized = normalized.substring("flutter_assets/".length());
+        }
 
         FlutterLoader loader = FlutterInjector.instance().flutterLoader();
         String lookupKey = loader.getLookupKeyForAsset(normalized);
@@ -280,6 +283,9 @@ class Convert {
         String assetName = (String) o;
         if (applicationContext == null || assetName == null) return null;
         String normalized = assetName.startsWith("asset:") ? assetName.substring(6) : assetName;
+        if (normalized.startsWith("flutter_assets/")) {
+            normalized = normalized.substring("flutter_assets/".length());
+        }
         FlutterLoader loader = FlutterInjector.instance().flutterLoader();
         String lookupKey = loader.getLookupKeyForAsset(normalized);
         return "flutter_assets/" + lookupKey;
