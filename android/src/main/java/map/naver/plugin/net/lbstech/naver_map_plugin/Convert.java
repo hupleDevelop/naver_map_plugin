@@ -218,6 +218,9 @@ class Convert {
 
         FlutterLoader loader = FlutterInjector.instance().flutterLoader();
         String lookupKey = loader.getLookupKeyForAsset(normalized);
+        if (lookupKey.startsWith("flutter_assets/")) {
+            lookupKey = lookupKey.substring("flutter_assets/".length());
+        }
         String assetPath = "flutter_assets/" + lookupKey;
 
         // LRU cache hit
@@ -288,6 +291,9 @@ class Convert {
         }
         FlutterLoader loader = FlutterInjector.instance().flutterLoader();
         String lookupKey = loader.getLookupKeyForAsset(normalized);
+        if (lookupKey.startsWith("flutter_assets/")) {
+            lookupKey = lookupKey.substring("flutter_assets/".length());
+        }
         return "flutter_assets/" + lookupKey;
     }
 
