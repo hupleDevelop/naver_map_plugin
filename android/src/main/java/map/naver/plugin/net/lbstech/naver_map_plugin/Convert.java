@@ -28,7 +28,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 
-import io.flutter.view.FlutterMain;
+import io.flutter.FlutterInjector;
+import io.flutter.embedding.engine.loader.FlutterLoader;
 import android.util.LruCache;
 
 @SuppressWarnings("rawtypes")
@@ -45,6 +46,7 @@ class Convert {
     static void init(Context context) {
         applicationContext = context == null ? null : context.getApplicationContext();
     }
+
     @SuppressWarnings("ConstantConditions")
     static void carveMapOptions(NaverMapOptionSink sink, Map<String, Object> options) {
         if (options.containsKey("mapType"))
@@ -206,36 +208,48 @@ class Convert {
 
     static OverlayImage toOverlayImage(Object o) {
         String assetName = (String) o;
-        if (assetName == null) return null;
+        if (applicationContext == null || assetName == null) return null;
 
-        // Use original assetName as cache key (no normalization)
+        // Normalize potential "asset:" prefix from Flutter
+        String normalized = assetName.startsWith("asset:") ? assetName.substring(6) : assetName;
+        if (normalized.startsWith("flutter_assets/")) {
+            normalized = normalized.substring("flutter_assets/".length());
+        }
+
+        FlutterLoader loader = FlutterInjector.instance().flutterLoader();
+        String lookupKey = loader.getLookupKeyForAsset(normalized);
+        if (lookupKey.startsWith("flutter_assets/")) {
+            lookupKey = lookupKey.substring("flutter_assets/".length());
+        }
+        String assetPath = "flutter_assets/" + lookupKey;
+
+        // LRU cache hit
         synchronized (assetCacheLock) {
-            OverlayImage cached = assetOverlayCache.get(assetName);
+            OverlayImage cached = assetOverlayCache.get(assetPath);
             if (cached != null) return cached;
         }
 
-        String key = FlutterMain.getLookupKeyForAsset(assetName);
-        OverlayImage oi = OverlayImage.fromAsset(key);
+        // Fast non-blocking path: return fromAsset wrapper (SDK will decode lazily)
+        OverlayImage oi = OverlayImage.fromAsset(assetPath);
         synchronized (assetCacheLock) {
-            assetOverlayCache.put(assetName, oi);
+            assetOverlayCache.put(assetPath, oi);
         }
         return oi;
     }
 
-    // Background decode + future de-dup using the original assetName as cache/in-flight key
+    // Background preloading with future de-duplication. Decodes the PNG and stores OverlayImage in LRU.
     static void preloadOverlayImage(Object o) {
-        if (!(o instanceof String)) return;
-        String assetName = (String) o;
-        if (assetName == null) return;
+        String assetPath = resolveAssetPath(o);
+        if (assetPath == null) return;
         synchronized (assetCacheLock) {
-            if (assetOverlayCache.get(assetName) != null) return;
+            if (assetOverlayCache.get(assetPath) != null) return;
         }
-        inFlightDecodes.computeIfAbsent(assetName, keyName -> {
+        inFlightDecodes.computeIfAbsent(assetPath, key -> {
             FutureTask<OverlayImage> task = new FutureTask<>(new Callable<OverlayImage>() {
                 @Override
                 public OverlayImage call() {
-                    if (applicationContext == null) return null;
-                    String lookupKey = FlutterMain.getLookupKeyForAsset(assetName);
+                    // Convert back to lookupKey for AssetManager.open
+                    String lookupKey = key.startsWith("flutter_assets/") ? key.substring("flutter_assets/".length()) : key;
                     AssetManager am = applicationContext.getAssets();
                     InputStream is = null;
                     try {
@@ -243,13 +257,13 @@ class Convert {
                         Bitmap bmp = BitmapFactory.decodeStream(is);
                         if (bmp == null) return null;
                         OverlayImage decoded = OverlayImage.fromBitmap(bmp);
-                        synchronized (assetCacheLock) { assetOverlayCache.put(assetName, decoded); }
+                        synchronized (assetCacheLock) { assetOverlayCache.put(key, decoded); }
                         return decoded;
                     } catch (IOException ignored) {
                         return null;
                     } finally {
                         if (is != null) { try { is.close(); } catch (IOException ignored2) {} }
-                        inFlightDecodes.remove(assetName);
+                        inFlightDecodes.remove(key);
                     }
                 }
             });
@@ -265,6 +279,22 @@ class Convert {
             preloadOverlayImage(icon);
             if (++count >= 64) break;
         }
+    }
+
+    private static String resolveAssetPath(Object o) {
+        if (!(o instanceof String)) return null;
+        String assetName = (String) o;
+        if (applicationContext == null || assetName == null) return null;
+        String normalized = assetName.startsWith("asset:") ? assetName.substring(6) : assetName;
+        if (normalized.startsWith("flutter_assets/")) {
+            normalized = normalized.substring("flutter_assets/".length());
+        }
+        FlutterLoader loader = FlutterInjector.instance().flutterLoader();
+        String lookupKey = loader.getLookupKeyForAsset(normalized);
+        if (lookupKey.startsWith("flutter_assets/")) {
+            lookupKey = lookupKey.substring("flutter_assets/".length());
+        }
+        return "flutter_assets/" + lookupKey;
     }
 
     private static final Map<Object, OverlayImage> cachedOverlayImage = new HashMap();

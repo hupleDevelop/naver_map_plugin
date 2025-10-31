@@ -13,11 +13,8 @@ import com.naver.maps.map.overlay.InfoWindow;
 import com.naver.maps.map.overlay.Marker;
 import com.naver.maps.map.overlay.Overlay;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import io.flutter.Log;
 
@@ -43,49 +40,46 @@ class NaverMarkerController {
 
     void add(List jsonArray) {
         if (jsonArray == null || jsonArray.isEmpty()) return;
-        ExecutorService service = Executors.newCachedThreadPool();
-        service.execute(()->{
-            for (Object json : jsonArray) {
-                HashMap<String, Object> data = (HashMap<String, Object>) json;
-                MarkerController marker = new MarkerController(data);
-                marker.setOnClickListener(onClickListener);
-                idToController.put(marker.id, marker);
-            }
-            handler.post(()->{
-                try {
-                    List<MarkerController> markers = new ArrayList(idToController.values());
-                    for (MarkerController marker : markers) {
-                        marker.setMap(naverMap);
-                    }
-                } catch (Exception e) {
-                    //Log.e("add", e.getMessage());
+        handler.post(() -> {
+            try {
+                for (Object json : jsonArray) {
+                    HashMap<String, Object> data = (HashMap<String, Object>) json;
+                    MarkerController marker = new MarkerController(data);
+                    marker.setOnClickListener(onClickListener);
+                    idToController.put(marker.id, marker);
+                    marker.setMap(naverMap);
                 }
-            });
+            } catch (Exception e) {
+                //Log.e("add", e.getMessage());
+            }
         });
-        service.shutdown();
     }
 
     void remove(List jsonArray) {
         if (jsonArray == null || jsonArray.isEmpty()) return;
-        for (Object json : jsonArray) {
-            String id = (String) json;
-            MarkerController marker = idToController.get(id);
-            if (marker != null) {
-                marker.setOnClickListener(null);
-                marker.setMap(null);
+        handler.post(() -> {
+            for (Object json : jsonArray) {
+                String id = (String) json;
+                MarkerController marker = idToController.get(id);
+                if (marker != null) {
+                    marker.setOnClickListener(null);
+                    marker.setMap(null);
+                }
+                idToController.remove(id);
             }
-            idToController.remove(id);
-        }
+        });
     }
 
     void modify(List jsonArray) {
         if (jsonArray == null || jsonArray.isEmpty()) return;
-        for (Object json : jsonArray) {
-            HashMap<String, Object> data = (HashMap<String, Object>) json;
-            String id = (String) data.get("markerId");
-            if (idToController.containsKey(id) && idToController.get(id) != null)
-                idToController.get(id).interpret(data);
-        }
+        handler.post(() -> {
+            for (Object json : jsonArray) {
+                HashMap<String, Object> data = (HashMap<String, Object>) json;
+                String id = (String) data.get("markerId");
+                if (idToController.containsKey(id) && idToController.get(id) != null)
+                    idToController.get(id).interpret(data);
+            }
+        });
     }
 
     class MarkerController{
